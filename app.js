@@ -8,8 +8,8 @@
     del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
   };
   var CLAUDE_MODEL = 'claude-sonnet-5-5';
-  var GEMINI_MODEL = 'gemini-flash-latest';
-  var GEMINI_FALLBACK = 'gemini-2.5-flash-lite';
+  var GEMINI_MODEL = 'gemini-2.5-flash-lite';
+  var GEMINI_FALLBACK = 'gemini-2.5-flash';
 
   /* ---------- state ---------- */
   var lang = store.get('jv-lang');
