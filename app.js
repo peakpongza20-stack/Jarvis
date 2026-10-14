@@ -8,8 +8,8 @@
     del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
   };
   var CLAUDE_MODEL = 'claude-sonnet-5-5';
-  var GEMINI_MODEL = 'gemini-2.5-flash-lite';
-  var GEMINI_FALLBACK = 'gemini-2.5-flash';
+  var GEMINI_MODEL = 'gemini-flash-latest';
+  var GEMINI_FALLBACK = 'gemini-2.5-flash';   // legacy, only works for older accounts
 
   /* ---------- state ---------- */
   var lang = store.get('jv-lang');
@@ -407,14 +407,24 @@
     }
     return data;
   }
+  async function listGeminiModels() {
+    var res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': apiKey } });
+    var j = await res.json();
+    return (j.models || []).filter(function (m) {
+      return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0 &&
+        /gemini-[\d.]+-flash|gemini-flash/.test(m.name) &&
+        !/image|tts|live|embed|audio|robotics|computer|thinking|exp|preview/.test(m.name);
+    }).map(function (m) { return m.name.replace(/^models\//, ''); }).sort().reverse();
+  }
   async function thinkGemini() {
     var contents = history.slice(-16).map(function (m) {
       return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
     });
     while (contents.length && contents[0].role !== 'user') contents.shift();
     // Try the chosen model first. If it is busy (503), over quota (429) or missing (404), move to the next one.
-    var chain = [activeModel(), GEMINI_FALLBACK, 'gemini-2.5-flash-lite'].filter(function (m, i, a) { return a.indexOf(m) === i; });
-    var at = 0;
+    var chain = [activeModel(), GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', GEMINI_FALLBACK, 'gemini-2.5-flash-lite']
+      .filter(function (m, i, a) { return a.indexOf(m) === i; });
+    var at = 0, discovered = false;
     for (var step = 0; step < 5; step++) {
       var data;
       for (;;) {
@@ -423,7 +433,16 @@
           break;
         } catch (e) {
           var retryable = e.status === 503 || e.status === 500 || e.status === 429 || e.status === 404;
-          if (retryable && at < chain.length - 1) { at++; continue; }
+          if (!retryable) throw e;
+          if (at >= chain.length - 1 && !discovered) {
+            // Out of known names: ask Google which models this key can actually use.
+            discovered = true;
+            try {
+              var found = await listGeminiModels();
+              found.forEach(function (m) { if (chain.indexOf(m) < 0) chain.push(m); });
+            } catch (e2) {}
+          }
+          if (at < chain.length - 1) { at++; continue; }
           throw e;
         }
       }
