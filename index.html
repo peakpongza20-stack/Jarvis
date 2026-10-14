@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jarvis</title>
+<meta name="theme-color" content="#040b14">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="word">J.A.R.V.I.S.</span>
+    <span class="sub" id="net">NO KEY SET</span>
+  </div>
+  <div class="ctrl">
+    <div class="seg" role="group" aria-label="Language">
+      <button type="button" data-lang="auto" aria-pressed="true">AUTO</button>
+      <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      <button type="button" data-lang="th" aria-pressed="false">TH</button>
+    </div>
+    <button type="button" id="mute" class="pill" aria-pressed="false">VOICE ON</button>
+    <button type="button" id="gear" class="pill" aria-label="Settings">SET</button>
+  </div>
+</header>
+
+<section class="hero">
+  <button type="button" class="core" id="core" aria-label="Arc reactor. Tap to stop speaking or listening">
+    <canvas id="reactor" width="224" height="224"></canvas>
+  </button>
+  <dl class="telemetry">
+    <div><dt>LOCAL TIME</dt><dd id="clock">--:--:--</dd></div>
+    <div><dt>DATE</dt><dd id="date">&nbsp;</dd></div>
+    <div><dt>STATE</dt><dd id="state">STANDING BY</dd></div>
+  </dl>
+</section>
+
+<div class="timers" id="timers" aria-live="polite"></div>
+
+<main class="log" id="log" role="log" aria-live="polite"></main>
+
+<div class="chips" id="chips">
+  <button type="button" data-q="What time is it?">What time is it?</button>
+  <button type="button" data-q="What is the weather like where I am?">Weather here</button>
+  <button type="button" data-q="Set a timer for 1 minute">Timer 1 min</button>
+  <button type="button" data-q="Show me coffee shops near me on the map">Coffee nearby</button>
+  <button type="button" data-q="สวัสดี จาร์วิส วันนี้ช่วยอะไรฉันได้บ้าง">สวัสดี จาร์วิส</button>
+  <button type="button" data-q="Tell me a short joke">Tell me a joke</button>
+</div>
+
+<p class="note" id="note" aria-live="polite"></p>
+
+<form class="dock" id="dock" autocomplete="off">
+  <button type="button" class="icon-btn" id="mic" aria-pressed="false" aria-label="Speak a command">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+  </button>
+  <input id="say" type="text" enterkeyhint="send" placeholder="Speak or type a command" aria-label="Command">
+  <button type="submit" class="send" id="send">SEND</button>
+</form>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h2 id="sheet-title">SETTINGS</h2>
+
+    <label for="key">Anthropic API key</label>
+    <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-...">
+    <p class="hint">Saved only on this phone. Create one at console.anthropic.com. Usage is billed to your Anthropic account.</p>
+
+    <label for="model">Model</label>
+    <input id="model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="claude-sonnet-5-5">
+
+    <label class="check" for="hands">
+      <input id="hands" type="checkbox">
+      <span>Hands-free: say "Jarvis" or "จาร์วิส" then your command (works while the app is open)</span>
+    </label>
+
+    <div class="row">
+      <button type="button" class="send" id="save">SAVE</button>
+      <button type="button" class="pill big" id="clear">CLEAR CHAT</button>
+      <button type="button" class="pill big" id="close">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
