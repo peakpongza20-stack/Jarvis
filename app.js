@@ -412,14 +412,20 @@
       return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
     });
     while (contents.length && contents[0].role !== 'user') contents.shift();
-    var name = activeModel();
+    // Try the chosen model first. If it is busy (503), over quota (429) or missing (404), move to the next one.
+    var chain = [activeModel(), GEMINI_FALLBACK, 'gemini-2.5-flash-lite'].filter(function (m, i, a) { return a.indexOf(m) === i; });
+    var at = 0;
     for (var step = 0; step < 5; step++) {
       var data;
-      try {
-        data = await callGemini(contents, name);
-      } catch (e) {
-        if (e.status === 404 && name === GEMINI_MODEL) { name = GEMINI_FALLBACK; data = await callGemini(contents, name); }
-        else throw e;
+      for (;;) {
+        try {
+          data = await callGemini(contents, chain[at]);
+          break;
+        } catch (e) {
+          var retryable = e.status === 503 || e.status === 500 || e.status === 429 || e.status === 404;
+          if (retryable && at < chain.length - 1) { at++; continue; }
+          throw e;
+        }
       }
       var cand = data.candidates && data.candidates[0];
       if (!cand || !cand.content) {
@@ -504,6 +510,7 @@
       var gem = provider() === 'gemini';
       var msg = (s === 401 || s === 403 || (s === 400 && /api key/i.test(e.message))) ? 'The API key was rejected. Check it in SET.'
         : s === 429 ? (gem ? 'The free Gemini limit is used up for now. Wait a minute, or try again tomorrow.' : 'Too many requests. Give me a few seconds.')
+        : (s === 503 || s === 500) ? 'The AI service is busy right now. Try again in a moment.'
         : s === 404 ? 'That model name was not found. Clear the Model box in SET to use the default.'
         : (s === 400 && /credit|balance/i.test(e.message)) ? 'The Anthropic account has no credit left. Add credit at console.anthropic.com.'
         : !navigator.onLine ? 'You are offline. I need a connection to think.'
