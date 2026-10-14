@@ -7,7 +7,9 @@
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
     del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
   };
-  var DEFAULT_MODEL = 'claude-sonnet-5-5';
+  var CLAUDE_MODEL = 'claude-sonnet-5-5';
+  var GEMINI_MODEL = 'gemini-flash-latest';
+  var GEMINI_FALLBACK = 'gemini-2.5-flash';
 
   /* ---------- state ---------- */
   var lang = store.get('jv-lang');
@@ -15,7 +17,15 @@
   var muted = store.get('jv-mute') === '1';
   var hands = store.get('jv-hands') === '1';
   var apiKey = store.get('jv-key') || '';
-  var model = store.get('jv-model') || DEFAULT_MODEL;
+  var model = store.get('jv-model') || '';   // custom model name, empty = default for the key type
+  // Keys starting with sk-ant are Claude keys. Anything else (AIza...) is treated as a Google Gemini key.
+  function provider() { return /^sk-ant/i.test(apiKey) ? 'claude' : 'gemini'; }
+  function activeModel() {
+    var p = provider();
+    if (model && p === 'gemini' && !/^claude/i.test(model)) return model;
+    if (model && p === 'claude' && !/^gemini/i.test(model)) return model;
+    return p === 'claude' ? CLAUDE_MODEL : GEMINI_MODEL;
+  }
   var mode = 'idle', busy = false, history = [], speaking = false, armed = false;
   var STATE_TEXT = { idle: 'STANDING BY', listen: 'LISTENING', think: 'PROCESSING', speak: 'RESPONDING' };
 
@@ -122,7 +132,7 @@
   }
   function setNet() {
     var net = $('net');
-    net.textContent = apiKey ? 'CORE READY' : 'NO KEY SET';
+    net.textContent = apiKey ? 'CORE READY / ' + (provider() === 'claude' ? 'CLAUDE' : 'GEMINI') : 'NO KEY SET';
     net.className = 'sub ' + (apiKey ? 'ok' : 'off');
   }
 
@@ -359,7 +369,7 @@
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       },
-      body: JSON.stringify({ model: model, max_tokens: 1024, system: system(), tools: TOOLS, messages: messages })
+      body: JSON.stringify({ model: activeModel(), max_tokens: 1024, system: system(), tools: TOOLS, messages: messages })
     });
     var data = null;
     try { data = await res.json(); } catch (e) {}
@@ -370,7 +380,71 @@
     }
     return data;
   }
+  /* Gemini (Google). Same tools, translated to Gemini's function-calling format. */
+  var GEMINI_TOOLS = [{ functionDeclarations: TOOLS.map(function (t) {
+    var d = { name: t.name, description: t.description };
+    var props = t.input_schema && t.input_schema.properties;
+    if (props && Object.keys(props).length) d.parameters = t.input_schema;   // Gemini rejects empty parameter objects
+    return d;
+  }) }];
+  async function callGemini(contents, modelName) {
+    var res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(modelName) + ':generateContent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system() }] },
+        contents: contents,
+        tools: GEMINI_TOOLS,
+        generationConfig: { maxOutputTokens: 1024 }
+      })
+    });
+    var data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      var err = new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+  async function thinkGemini() {
+    var contents = history.slice(-16).map(function (m) {
+      return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
+    });
+    while (contents.length && contents[0].role !== 'user') contents.shift();
+    var name = activeModel();
+    for (var step = 0; step < 5; step++) {
+      var data;
+      try {
+        data = await callGemini(contents, name);
+      } catch (e) {
+        if (e.status === 404 && name === GEMINI_MODEL) { name = GEMINI_FALLBACK; data = await callGemini(contents, name); }
+        else throw e;
+      }
+      var cand = data.candidates && data.candidates[0];
+      if (!cand || !cand.content) {
+        var why = (data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || 'empty reply';
+        return 'I could not answer that one (' + why + ').';
+      }
+      var parts = cand.content.parts || [];
+      var calls = parts.filter(function (p) { return p.functionCall; });
+      if (!calls.length) {
+        return parts.filter(function (p) { return typeof p.text === 'string' && !p.thought; }).map(function (p) { return p.text; }).join('').trim();
+      }
+      contents.push({ role: 'model', parts: parts });   // echo the model turn back untouched
+      var replies = [];
+      for (var i = 0; i < calls.length; i++) {
+        var fc = calls[i].functionCall, out;
+        try { out = await runTool(fc.name, fc.args); } catch (e) { out = { error: String(e && e.message || e) }; }
+        replies.push({ functionResponse: { name: fc.name, response: { result: out } } });
+      }
+      contents.push({ role: 'user', parts: replies });
+    }
+    return 'That took too many steps. Please try a simpler request.';
+  }
+
   async function think() {
+    if (provider() === 'gemini') return thinkGemini();
     // history holds plain user/assistant turns. Tool loops stay inside this call.
     var msgs = history.slice(-16).map(function (m) { return { role: m.role, content: m.content }; });
     while (msgs.length && msgs[0].role !== 'user') msgs.shift();
@@ -403,7 +477,7 @@
     stopListening();
     if (!apiKey) {
       addMsg('user', text);
-      addMsg('bot', 'I need an Anthropic API key before I can think. Tap SET at the top and paste one in.');
+      addMsg('bot', 'I need an API key before I can think. Tap SET at the top and paste a free Gemini key or a Claude key.');
       openSheet();
       return;
     }
@@ -427,9 +501,10 @@
       speak(reply);
     } catch (e) {
       var s = e && e.status;
-      var msg = s === 401 ? 'The API key was rejected. Check it in SET.'
-        : s === 429 ? 'Too many requests. Give me a few seconds.'
-        : s === 404 ? 'That model name was not found. Check it in SET.'
+      var gem = provider() === 'gemini';
+      var msg = (s === 401 || s === 403 || (s === 400 && /api key/i.test(e.message))) ? 'The API key was rejected. Check it in SET.'
+        : s === 429 ? (gem ? 'The free Gemini limit is used up for now. Wait a minute, or try again tomorrow.' : 'Too many requests. Give me a few seconds.')
+        : s === 404 ? 'That model name was not found. Clear the Model box in SET to use the default.'
         : (s === 400 && /credit|balance/i.test(e.message)) ? 'The Anthropic account has no credit left. Add credit at console.anthropic.com.'
         : !navigator.onLine ? 'You are offline. I need a connection to think.'
         : 'Something went wrong reaching my core: ' + (e && e.message ? e.message : 'unknown error');
@@ -529,7 +604,7 @@
   /* ---------- settings sheet ---------- */
   function openSheet() {
     $('key').value = apiKey;
-    $('model').value = model === DEFAULT_MODEL ? '' : model;
+    $('model').value = model;
     $('hands').checked = hands;
     $('sheet').hidden = false;
   }
@@ -538,10 +613,10 @@
   $('close').addEventListener('click', closeSheet);
   $('save').addEventListener('click', function () {
     apiKey = $('key').value.trim();
-    model = $('model').value.trim() || DEFAULT_MODEL;
+    model = $('model').value.trim();
     hands = $('hands').checked;
     if (apiKey) store.set('jv-key', apiKey); else store.del('jv-key');
-    store.set('jv-model', model);
+    if (model) store.set('jv-model', model); else store.del('jv-model');
     store.set('jv-hands', hands ? '1' : '0');
     setNet();
     closeSheet();
@@ -605,6 +680,14 @@
   setNet();
   tickClock();
   setInterval(function () { tickClock(); tickTimers(); }, 1000);
-  if (!apiKey) { say('First step: tap SET and paste your Anthropic API key.'); }
+  // The settings text lives in index.html; update it here so only app.js needs replacing.
+  (function () {
+    var lab = document.querySelector('label[for="key"]');
+    if (lab) lab.textContent = 'API key (Gemini or Claude)';
+    var hint = document.querySelector('.hint');
+    if (hint) hint.textContent = 'Saved only on this phone. A key from aistudio.google.com (free) or console.anthropic.com both work. The app picks the right one automatically.';
+    $('model').placeholder = 'leave empty for the default';
+  })();
+  if (!apiKey) { say('First step: tap SET and paste your API key.'); }
   if (hands) startHands();
 })();
